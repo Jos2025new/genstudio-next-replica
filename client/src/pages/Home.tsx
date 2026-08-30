@@ -1,33 +1,93 @@
-import { useAuth } from "@/_core/hooks/useAuth";
-import { Button } from "@/components/ui/button";
-import { Loader2 } from "lucide-react";
-import { Streamdown } from 'streamdown';
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { trpc } from "@/lib/trpc";
+import { generationReducer } from "@/lib/generationState";
+import { toast } from "sonner";
+import {
+  AlertCircle, ArrowDownToLine, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3,
+  Copy, Download, FileImage, ImagePlus, KeyRound, Layers3, Loader2, Menu, Minus, Plus,
+  RotateCcw, Settings2, ShieldCheck, Sparkles, Trash2, Upload, WandSparkles, X, Zap,
+} from "lucide-react";
 
-/**
- * All content in this page are only for example, replace with your own feature implementation
- * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
- */
+type GalleryItem = { id: string; url: string; prompt: string; model: string; createdAt: number };
+
+function maskKey(key: string) { return key ? `${key.slice(0, 5)}${"•".repeat(Math.max(5, Math.min(12, key.length - 5)))}${key.slice(-4)}` : ""; }
+function getImageUrl(item: any): string | undefined { return item?.url || (item?.b64_json ? `data:image/png;base64,${item.b64_json}` : undefined); }
+
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
+  const [activeTab, setActiveTab] = useState<"generate" | "compose">("generate");
+  const [prompt, setPrompt] = useState("");
+  const [modelId, setModelId] = useState("");
+  const [size, setSize] = useState("1024x1024");
+  const [count, setCount] = useState(1);
+  const [quality, setQuality] = useState("medium");
+  const [guidance, setGuidance] = useState(7.5);
+  const [strength, setStrength] = useState(.8);
+  const [seed, setSeed] = useState("");
+  const [references, setReferences] = useState<string[]>([]);
+  const [gallery, setGallery] = useState<GalleryItem[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
+  const [generationState, dispatchGeneration] = useReducer(generationReducer, { status: "idle" });
+  const loading = generationState.status === "loading";
+  const [error, setError] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [keyDraft, setKeyDraft] = useState("");
+  const [apiKey, setApiKey] = useState("");
+  const [keyStatus, setKeyStatus] = useState<"idle" | "checking" | "valid" | "invalid">("idle");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const modelsQuery = trpc.nano.models.useQuery(undefined, { staleTime: 1000 * 60 * 10, retry: 1 });
+  const validateKey = trpc.nano.validateKey.useMutation();
+  const models = modelsQuery.data || [];
+  const selectedModel = useMemo(() => models.find((m: any) => m.id === modelId) || models[0], [models, modelId]);
+  const resolutions = (selectedModel as any)?.supported_parameters?.resolutions || (selectedModel as any)?.supported_parameters?.resolution?.values || ["1024x1024", "1024x768", "768x1024"];
 
-  // If theme is switchable in App.tsx, we can implement theme toggling like this:
-  // const { theme, toggleTheme } = useTheme();
+  useEffect(() => {
+    const savedKey = sessionStorage.getItem("nanogpt_api_key") || "";
+    setApiKey(savedKey); setKeyDraft(savedKey); setKeyStatus(savedKey ? "valid" : "idle");
+    setGallery(JSON.parse(sessionStorage.getItem("genstudio_gallery") || "[]"));
+    setHistory(JSON.parse(sessionStorage.getItem("genstudio_history") || "[]"));
+  }, []);
+  useEffect(() => { if (!modelId && models[0]) setModelId(models[0].id); }, [models, modelId]);
+  useEffect(() => { if (selectedModel && !resolutions.includes(size)) setSize(resolutions[0]); }, [selectedModel, resolutions, size]);
 
-  return (
-    <div className="min-h-screen flex flex-col">
-      <main>
-        {/* Example: lucide-react for icons */}
-        <Loader2 className="animate-spin" />
-        Example Page
-        {/* Example: Streamdown for markdown rendering */}
-        <Streamdown>Any **markdown** content</Streamdown>
-        <Button variant="default">Example Button</Button>
-      </main>
-    </div>
-  );
+  const saveKey = async () => {
+    if (!keyDraft.trim()) { sessionStorage.removeItem("nanogpt_api_key"); setApiKey(""); setKeyStatus("idle"); toast.success("API Key eliminada"); return; }
+    setKeyStatus("checking");
+    try { await validateKey.mutateAsync({ apiKey: keyDraft.trim() }); sessionStorage.setItem("nanogpt_api_key", keyDraft.trim()); setApiKey(keyDraft.trim()); setKeyStatus("valid"); toast.success("API Key validada y guardada en esta sesión"); }
+    catch { setKeyStatus("invalid"); toast.error("No se pudo validar la API Key. Revisa el valor e inténtalo de nuevo."); }
+  };
+  const removeKey = () => { sessionStorage.removeItem("nanogpt_api_key"); setApiKey(""); setKeyDraft(""); setKeyStatus("idle"); toast.success("API Key eliminada"); };
+  const addFiles = (files: FileList | null) => { if (!files) return; Array.from(files).slice(0, 4 - references.length).forEach(file => { if (!['image/png','image/jpeg','image/webp'].includes(file.type)) { toast.error(`${file.name}: usa PNG, JPEG o WebP.`); return; } if (file.size > 4 * 1024 * 1024) { toast.error(`${file.name}: el tamaño máximo es 4 MB.`); return; } const reader = new FileReader(); reader.onload = () => setReferences(r => [...r, String(reader.result)]); reader.readAsDataURL(file); }); };
+
+  const generateMutation = trpc.nano.generate.useMutation({
+    onSuccess: (result: any) => {
+      const data = Array.isArray(result?.data) ? result.data : [];
+      const items = data.map((item: any, index: number) => ({ id: `${Date.now()}-${index}`, url: getImageUrl(item), prompt, model: selectedModel?.name || modelId, createdAt: Date.now() })).filter((item: GalleryItem) => item.url);
+      if (!items.length) setError("NanoGPT no devolvió imágenes. Revisa el modelo o los parámetros.");
+      else { const next = [...items, ...gallery].slice(0, 24); setGallery(next); sessionStorage.setItem("genstudio_gallery", JSON.stringify(next)); toast.success(`${items.length} resultado${items.length === 1 ? "" : "s"} listo${items.length === 1 ? "" : "s"}`); }
+      dispatchGeneration({ type: "success", count: items.length });
+    },
+    onError: (err) => { const message = err.message || "La generación falló. Intenta de nuevo."; setError(message); dispatchGeneration({ type: "error", message }); },
+  });
+  const submitGeneration = () => {
+    if (!apiKey) { setSettingsOpen(true); toast.error("Configura tu API Key de NanoGPT para continuar."); return; }
+    if (!prompt.trim()) { setError("Añade una instrucción para crear tu imagen."); return; }
+    if (!modelId) { setError("Espera a que se carguen los modelos disponibles."); return; }
+    if (activeTab === "compose" && !selectedModel?.capabilities?.image_to_image) { setError("El modelo seleccionado no admite composición con imágenes de referencia."); return; }
+    const nextHistory = [prompt, ...history.filter(p => p !== prompt)].slice(0, 12); setHistory(nextHistory); sessionStorage.setItem("genstudio_history", JSON.stringify(nextHistory)); setError(""); dispatchGeneration({ type: "start" });
+    generateMutation.mutate({ apiKey, model: modelId, prompt, n: count, size, quality, guidance_scale: guidance, strength: activeTab === "compose" ? strength : undefined, seed: seed ? Number(seed) : undefined, imageDataUrls: activeTab === "compose" && references.length ? references : undefined });
+  };
+
+  return <div className="min-h-screen bg-[#0b0c0e] text-[#e7e9ed]">
+    <header className="h-[68px] border-b border-[#24262a] flex items-center justify-between px-4 md:px-7 sticky top-0 z-30 bg-[#0b0c0e]/95 backdrop-blur">
+      <div className="flex items-center gap-3"><button className="h-8 w-8 rounded-lg border border-[#292c31] text-[#777d87] hover:text-white grid place-items-center"><ChevronLeft size={15}/></button><div className="font-bold tracking-[-.05em] text-[17px]">GENSTUDIO <span className="text-[#c8ff32]">NEXT</span></div></div>
+      <div className="hidden sm:flex rounded-lg bg-[#090a0c] p-1 border border-[#16181b]"><button onClick={() => setActiveTab("generate")} className={`px-8 py-2 rounded-md text-[10px] uppercase tracking-[.13em] font-semibold ${activeTab === "generate" ? "bg-[#1b1d20] text-white" : "text-[#676c74]"}`}>Generación</button><button onClick={() => setActiveTab("compose")} className={`px-8 py-2 rounded-md text-[10px] uppercase tracking-[.13em] font-semibold ${activeTab === "compose" ? "bg-[#1b1d20] text-white" : "text-[#676c74]"}`}>Compositor</button></div>
+      <div className="relative"><button onClick={() => setSettingsOpen(v => !v)} className={`h-9 w-9 rounded-lg border grid place-items-center transition ${settingsOpen ? "border-[#c8ff32] text-[#c8ff32]" : "border-[#2b2e33] text-[#868b94] hover:text-white"}`} aria-label="Configuración"><Menu size={18}/></button>{settingsOpen && <div className="absolute right-0 top-12 w-[min(350px,calc(100vw-32px))] panel-surface rounded-xl p-4 shadow-2xl z-40 fade-in"><div className="flex justify-between items-start mb-4"><div><div className="text-xs font-bold uppercase tracking-[.14em]">Conexión NanoGPT</div><div className="text-[11px] text-[#7c8189] mt-1">La clave se guarda solo en esta sesión.</div></div><KeyRound size={17} className="text-[#c8ff32]"/></div><label className="text-[10px] text-[#8a9098] uppercase tracking-[.12em]">API Key</label><div className="flex gap-2 mt-2"><input type="password" value={keyDraft} onChange={e => { setKeyDraft(e.target.value); setKeyStatus("idle"); }} placeholder="ngpt_••••••••••••" className="min-w-0 flex-1 bg-[#0b0c0e] border border-[#2c3035] rounded-lg px-3 py-2 text-sm outline-none focus:border-[#c8ff32]"/><button onClick={saveKey} disabled={keyStatus === "checking"} className="px-3 rounded-lg bg-[#c8ff32] text-[#10120d] text-[11px] font-bold">{keyStatus === "checking" ? <Loader2 size={15} className="animate-spin"/> : "Validar"}</button></div>{apiKey && <div className="flex items-center justify-between mt-3 text-[11px]"><span className={keyStatus === "valid" ? "text-[#c8ff32]" : "text-[#ff8d86]"}>{keyStatus === "valid" ? <ShieldCheck size={13} className="inline mr-1"/> : <AlertCircle size={13} className="inline mr-1"/>}{maskKey(apiKey)}</span><button onClick={removeKey} className="text-[#888e97] hover:text-[#ff8d86] flex items-center gap-1"><Trash2 size={12}/> Eliminar</button></div>}</div>}</div>
+    </header>
+    <div className="sm:hidden px-4 pt-4"><div className="flex rounded-lg bg-[#090a0c] p-1 border border-[#16181b]"><button onClick={() => setActiveTab("generate")} className={`flex-1 py-2 rounded-md text-[10px] uppercase tracking-[.13em] font-semibold ${activeTab === "generate" ? "bg-[#1b1d20] text-white" : "text-[#676c74]"}`}>Generación</button><button onClick={() => setActiveTab("compose")} className={`flex-1 py-2 rounded-md text-[10px] uppercase tracking-[.13em] font-semibold ${activeTab === "compose" ? "bg-[#1b1d20] text-white" : "text-[#676c74]"}`}>Compositor</button></div></div>
+    <main className="grid grid-cols-1 lg:grid-cols-[320px_1fr] min-h-[calc(100vh-68px)]">
+      <aside className="border-r border-[#24262a] p-5 md:p-6 space-y-4 bg-[#101113]"><div className="text-[10px] uppercase tracking-[.14em] text-[#858a92] mb-2">Prompt</div><textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Selecciona un modelo primero" className="w-full h-[150px] resize-none bg-[#17181b] border border-[#2a2c31] rounded-xl p-3 text-sm leading-6 outline-none focus:border-[#c8ff32]/60 placeholder:text-[#565b63]"/><div className="flex justify-between text-[10px] text-[#777c85]"><span>{prompt.length} caracteres</span><button onClick={() => setPrompt("")} className="hover:text-white">Borrar prompt</button></div><div className="flex gap-2"><div className="flex-1 bg-[#c8ff32] text-[#0a0c0b] rounded-lg px-3 py-2 text-xs font-bold truncate">{selectedModel?.name || "Sin modelo"}</div><button onClick={submitGeneration} disabled={loading || !modelId || modelsQuery.isLoading} className="flex-[1.8] rounded-lg bg-[#2c2d32] hover:bg-[#383a40] disabled:opacity-50 px-3 py-2 text-xs font-semibold">{loading ? <Loader2 size={15} className="animate-spin mx-auto"/> : "GENERAR"}</button></div><div className="panel-surface rounded-xl p-4"><div className="text-[10px] uppercase tracking-[.14em] text-[#868b93] mb-2">Historial de prompts <span className="text-[#c8ff32]">· {history.length}</span></div>{history.length ? <div className="space-y-1">{history.slice(0, 4).map((item, i) => <button key={i} onClick={() => setPrompt(item)} className="w-full text-left text-[11px] text-[#a4a8ae] hover:text-white truncate py-1">{item}</button>)}</div> : <div className="text-[11px] text-[#575c64]">Tus prompts recientes aparecerán aquí.</div>}</div><div className="panel-surface rounded-xl p-4"><div className="text-[10px] uppercase tracking-[.14em] text-[#868b93] mb-2">Modelo</div>{modelsQuery.isLoading ? <div className="flex items-center gap-2 text-[11px] text-[#8b9098] py-2"><Loader2 size={13} className="animate-spin text-[#c8ff32]"/> Cargando modelos NanoGPT…</div> : modelsQuery.isError ? <div className="text-[11px] text-[#ffaaa3] py-2">No se pudieron cargar los modelos. <button onClick={() => modelsQuery.refetch()} className="underline hover:text-white">Reintentar</button></div> : <select value={modelId} onChange={e => setModelId(e.target.value)} className="w-full bg-[#17181b] border border-[#2b2d31] rounded-lg px-3 py-2 text-xs outline-none"><option value="">Selecciona un modelo</option>{models.map((m: any) => <option key={m.id} value={m.id}>{m.name || m.id}</option>)}</select>}<div className="text-[11px] text-[#70757d] mt-2 leading-5">{selectedModel?.description || "Parámetros disponibles para el modelo seleccionado."}</div></div><div className="panel-surface rounded-xl p-4 space-y-3"><div className="flex items-center justify-between"><div className="text-[10px] uppercase tracking-[.14em] text-[#868b93]">Ajustes visuales</div><Settings2 size={14} className="text-[#686e77]"/></div><div><div className="flex justify-between text-[11px] mb-1"><span className="text-[#8b9098]">Relación de aspecto</span><span className="text-[#c8ff32] mono">{size}</span></div><select value={size} onChange={e => setSize(e.target.value)} className="w-full bg-[#17181b] border border-[#2b2d31] rounded-lg px-3 py-2 text-xs outline-none">{resolutions.map((r: string) => <option key={r}>{r}</option>)}</select></div><div><div className="flex justify-between text-[11px] mb-1"><span className="text-[#8b9098]">Resultados</span><span className="text-[#c8ff32] mono">{count}</span></div><input type="range" min="1" max={Math.min(4, (selectedModel as any)?.supported_parameters?.max_images || 4)} value={count} onChange={e => setCount(Number(e.target.value))} className="w-full accent-[#c8ff32]"/></div><div><div className="flex justify-between text-[11px] mb-1"><span className="text-[#8b9098]">Calidad</span><span className="text-[#c8ff32] mono">{quality}</span></div><div className="grid grid-cols-3 gap-1">{["low", "medium", "high"].map(q => <button key={q} onClick={() => setQuality(q)} className={`py-1.5 rounded text-[10px] uppercase ${quality === q ? "bg-[#c8ff32] text-[#0d100a]" : "bg-[#1b1d20] text-[#777d86]"}`}>{q}</button>)}</div></div></div></aside>
+      <section className="p-4 md:p-7 space-y-3 overflow-hidden"><div className="panel-surface rounded-2xl overflow-hidden"><div className="h-11 border-b border-[#26282d] flex items-center justify-between px-4"><div className="text-[10px] font-semibold uppercase tracking-[.14em]">{activeTab === "compose" ? "Componer imágenes" : "Adjuntar imagen"}</div><div className="flex items-center gap-2 text-[#8a9098]"><button onClick={() => fileRef.current?.click()} className="hover:text-[#c8ff32]" title="Subir referencias"><Plus size={15}/></button><span className="bg-[#c8ff32] text-[#11150b] px-2 py-1 rounded-full text-[10px] font-bold">{references.length}</span><ChevronDown size={13}/></div></div><input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple hidden onChange={e => addFiles(e.target.files)}/><div className={`min-h-[230px] md:min-h-[310px] m-3 rounded-xl border border-[#23252a] faint-grid flex items-center justify-center ${references.length ? "p-4" : "p-8"}`}>{references.length ? <div className="w-full"><div className="grid grid-cols-2 md:grid-cols-4 gap-3">{references.map((src, i) => <div key={i} className="relative aspect-square rounded-lg overflow-hidden border border-[#3a3d43]"><img src={src} className="w-full h-full object-cover"/><button onClick={() => setReferences(r => r.filter((_, x) => x !== i))} className="absolute top-2 right-2 bg-black/70 rounded-full p-1 text-white"><X size={13}/></button></div>)}<button onClick={() => fileRef.current?.click()} className="aspect-square rounded-lg border border-dashed border-[#484c54] grid place-items-center text-[#7c828b] hover:text-[#c8ff32] hover:border-[#c8ff32]"><ImagePlus size={22}/></button></div><div className="text-center text-[11px] text-[#777d85] mt-4">Añade hasta 4 referencias para guiar {activeTab === "compose" ? "la composición" : "el resultado"}.</div></div> : <button onClick={() => fileRef.current?.click()} className="text-center group"><div className="mx-auto mb-3 text-3xl grayscale opacity-70 group-hover:grayscale-0 transition">🖼️</div><div className="text-[12px] text-[#9a9fa7]">{modelsQuery.isLoading ? "Cargando modelos disponibles…" : modelsQuery.isError ? "No se pudo conectar con NanoGPT" : "Selecciona un modelo en el panel izquierdo"}</div><div className="text-[11px] text-[#5d626a] mt-2">Aquí se habilitarán las referencias que ese modelo acepte.<br/><span className="text-[#c8ff32]">Haz clic para subir una imagen</span></div></button>}</div></div><div className="panel-surface rounded-2xl overflow-hidden"><div className="h-11 px-4 flex items-center justify-between"><div className="text-[10px] uppercase tracking-[.14em] text-[#8e939b]">Procesamiento</div><div className="text-[10px] text-[#696f78]">{loading ? "Generando…" : "Listo para crear"} <ChevronRight size={12} className="inline"/></div></div>{(activeTab === "compose" || prompt) && <div className="border-t border-[#24262a] p-4 grid grid-cols-1 md:grid-cols-3 gap-4 fade-in"><label className="text-[11px] text-[#8b9098]">Intensidad de referencia<div className="flex items-center gap-2 mt-2"><input type="range" min="0" max="1" step=".05" value={strength} onChange={e => setStrength(Number(e.target.value))} className="flex-1 accent-[#c8ff32]"/><span className="mono text-[#c8ff32]">{strength.toFixed(2)}</span></div></label><label className="text-[11px] text-[#8b9098]">Guidance scale<div className="flex items-center gap-2 mt-2"><input type="range" min="0" max="20" step=".5" value={guidance} onChange={e => setGuidance(Number(e.target.value))} className="flex-1 accent-[#c8ff32]"/><span className="mono text-[#c8ff32]">{guidance}</span></div></label><label className="text-[11px] text-[#8b9098]">Seed opcional<div className="flex mt-2"><input value={seed} onChange={e => setSeed(e.target.value.replace(/\D/g, ""))} placeholder="Aleatoria" className="w-full bg-[#17181b] border border-[#2b2d31] rounded-lg px-3 py-2 text-xs outline-none focus:border-[#c8ff32]"/></div></label></div>}</div><div className="panel-surface rounded-2xl overflow-hidden"><div className="h-11 px-4 flex items-center justify-between"><div className="text-[10px] uppercase tracking-[.14em] text-[#8e939b]">Outputs <span className="text-[#c8ff32]">· {gallery.length}</span></div><button className="text-[#696f78] hover:text-white"><ChevronRight size={13}/></button></div>{error && <div className="mx-4 mb-4 rounded-lg border border-[#713d3d] bg-[#301b1c] text-[#ffaaa3] text-xs p-3 flex items-center gap-2"><AlertCircle size={15}/>{error}</div>}{loading && <div className="mx-4 mb-4 rounded-xl border border-[#35421f] bg-[#17200f] p-5 flex items-center gap-4"><div className="h-9 w-9 rounded-full border-2 border-[#c8ff32] border-t-transparent animate-spin"/><div><div className="text-sm text-white">Creando tu imagen…</div><div className="text-[11px] text-[#97a67c] mt-1">NanoGPT está procesando tu prompt y parámetros.</div></div></div>}{gallery.length ? <div className="p-4 pt-0 grid grid-cols-2 xl:grid-cols-4 gap-3">{gallery.map(item => <div key={item.id} className="group relative aspect-square rounded-xl overflow-hidden bg-[#17181b] border border-[#2a2c30]"><img src={item.url} alt={item.prompt} className="w-full h-full object-cover"/><div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/90 to-transparent translate-y-full group-hover:translate-y-0 transition-transform"><div className="text-[10px] text-white truncate">{item.prompt}</div><a href={item.url} download={`genstudio-${item.id}.png`} className="text-[10px] text-[#c8ff32] mt-1 inline-flex items-center gap-1"><Download size={11}/> Descargar</a></div></div>)}</div> : !loading && <div className="p-10 md:p-16 text-center text-[#575c64]"><Sparkles size={24} className="mx-auto mb-3 text-[#555a61]"/><div className="text-xs">Tus creaciones aparecerán aquí</div><div className="text-[11px] mt-2">Escribe un prompt y pulsa Generar para empezar.</div></div>}</div></section>
+    </main>
+    <footer className="fixed bottom-3 right-4 hidden md:flex items-center gap-3 text-[10px] text-[#555a62]"><span><CircleHelp size={13} className="inline mr-1"/>Ayuda</span><span><Zap size={12} className="inline mr-1 text-[#c8ff32]"/>NanoGPT conectado bajo demanda</span></footer>
+  </div>;
 }
