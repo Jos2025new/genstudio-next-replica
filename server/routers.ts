@@ -54,6 +54,12 @@ export const appRouter = router({
       if (!parsed.success) return [];
       return parsed.data.data.filter((model) => model.capabilities?.image_generation !== false);
     }),
+    videoModels: publicProcedure.query(async () => {
+      const data = await nanoFetch("/api/v1/video-models?detailed=true");
+      const parsed = z.object({ data: z.array(nanoModelSchema) }).safeParse(data);
+      if (!parsed.success) return [];
+      return parsed.data.data.filter((model) => model.capabilities?.video_generation !== false);
+    }),
     validateKey: publicProcedure.input(z.object({ apiKey: z.string().min(8) })).mutation(async ({ input }) => {
       await nanoFetch("/api/check-balance", { method: "POST", headers: { "x-api-key": input.apiKey } });
       return { valid: true } as const;

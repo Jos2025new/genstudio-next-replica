@@ -16,3 +16,9 @@
 - [x] Adaptar la experiencia a desktop, tablet y móvil.
 - [x] Añadir pruebas unitarias para validación de API Key y estado de generación.
 - [x] Ejecutar verificación TypeScript, tests y revisión visual responsive.
+
+- [x] Añadir botón funcional para replegar y desplegar el panel izquierdo.
+- [x] Eliminar el botón de navegación superior izquierdo no solicitado.
+- [x] Mantener el panel central centrado y adaptarlo al ancho disponible al cambiar el sidebar.
+- [x] Retirar del flujo los parámetros visuales no confirmados por la API de NanoGPT.
+- [x] Convertir el selector de modelo en un panel desplegable con búsqueda y secciones Imagen/Video.
