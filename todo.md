@@ -22,3 +22,15 @@
 - [x] Mantener el panel central centrado y adaptarlo al ancho disponible al cambiar el sidebar.
 - [x] Retirar del flujo los parámetros visuales no confirmados por la API de NanoGPT.
 - [x] Convertir el selector de modelo en un panel desplegable con búsqueda y secciones Imagen/Video.
+
+- [x] Añadir catálogo de modelos de vídeo con capacidades i2v desde NanoGPT.
+- [x] Implementar envío de trabajos i2v por lote usando una imagen de referencia por trabajo.
+- [x] Implementar consulta de estado de trabajos i2v y normalizar estados/completions.
+- [x] Añadir controles de lote, duración, relación de aspecto y resolución según el modelo.
+- [x] Mostrar progreso individual, errores y resultados de vídeo en la galería.
+- [x] Añadir pruebas unitarias para envío y polling i2v.
+- [x] Verificar el flujo i2v en desktop/móvil y guardar checkpoint.
+
+- [x] Filtrar el selector de vídeo para mostrar solo modelos con capacidad image_to_video.
+- [x] Derivar duración, relación de aspecto y límite de lote desde supported_parameters cuando estén disponibles.
+- [x] Guardar un checkpoint nuevo posterior a los cambios i2v y verificar esa versión final.

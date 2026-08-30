@@ -12,6 +12,20 @@ const nanoModelSchema = z.object({
   supported_parameters: z.record(z.string(), z.unknown()).optional(),
 }).passthrough();
 
+const videoRequestSchema = z.object({
+  apiKey: z.string().min(8),
+  model: z.string().min(1),
+  prompt: z.string().min(3),
+  imageDataUrl: z.string().startsWith("data:image/"),
+  duration: z.string().optional(),
+  seconds: z.string().optional(),
+  aspect_ratio: z.string().optional(),
+  resolution: z.string().optional(),
+  seed: z.number().int().optional(),
+});
+
+const videoStatusSchema = z.object({ apiKey: z.string().min(8), runId: z.string().min(1), model: z.string().min(1) });
+
 const imageRequestSchema = z.object({
   apiKey: z.string().min(8, "Introduce una API Key válida."),
   model: z.string().min(1),
@@ -63,6 +77,15 @@ export const appRouter = router({
     validateKey: publicProcedure.input(z.object({ apiKey: z.string().min(8) })).mutation(async ({ input }) => {
       await nanoFetch("/api/check-balance", { method: "POST", headers: { "x-api-key": input.apiKey } });
       return { valid: true } as const;
+    }),
+    videoGenerate: publicProcedure.input(videoRequestSchema).mutation(async ({ input }) => {
+      const body: Record<string, unknown> = { model: input.model, prompt: input.prompt, imageDataUrl: input.imageDataUrl, mode: "image-to-video" };
+      for (const key of ["duration", "seconds", "aspect_ratio", "resolution"] as const) if (input[key] !== undefined) body[key] = input[key];
+      if (input.seed !== undefined) body.seed = input.seed;
+      return nanoFetch("/api/generate-video", { method: "POST", headers: { "x-api-key": input.apiKey, "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    }),
+    videoStatus: publicProcedure.input(videoStatusSchema).query(async ({ input }) => {
+      return nanoFetch(`/api/video/status?runId=${encodeURIComponent(input.runId)}&model=${encodeURIComponent(input.model)}`, { headers: { "x-api-key": input.apiKey } });
     }),
     generate: publicProcedure.input(imageRequestSchema).mutation(async ({ input }) => {
       const body: Record<string, unknown> = {
