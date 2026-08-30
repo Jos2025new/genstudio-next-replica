@@ -34,3 +34,8 @@
 - [x] Filtrar el selector de vídeo para mostrar solo modelos con capacidad image_to_video.
 - [x] Derivar duración, relación de aspecto y límite de lote desde supported_parameters cuando estén disponibles.
 - [x] Guardar un checkpoint nuevo posterior a los cambios i2v y verificar esa versión final.
+
+- [x] Eliminar el bloque redundante de modelo activo si ya existe el selector principal.
+- [x] Ajustar el botón de generación a gris y el selector de modelo a verde neón.
+- [x] Mostrar el coste calculado por imagen o clip con redondeo y decimales pequeños.
+- [x] Verificar el bloque actualizado y guardar un nuevo checkpoint.
